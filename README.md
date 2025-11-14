@@ -1,0 +1,2 @@
+# wincheck
+Windows check
