@@ -1,16 +1,13 @@
-# WinLite Security / CIS-lite Check + OS/Disk/SMART/Restore Storage -> n8n (no HMAC)
-# Windows PowerShell 5.1+ (Run as Administrator recommended)
+# wincheck.ps1
+# Windows Lite Security / CIS-style baseline + OS/Disk/SMART checks
+# NO Webhook / HTTP logic in this file
 
 [CmdletBinding()]
 param(
-  [string]$WebhookUrl,
   [string]$ReportBase     = "$(Join-Path $env:ProgramData 'CG\LiteCheck\Windows_Lite_Check')",
-  [int]$HttpTimeoutSec    = 30,
-  [int]$RetryCount        = 0,
-  [int]$RetryDelaySec     = 3,
   [int]$MinFreePercent    = 15,
-  [switch]$OnlySendNonCompliant,   # if set, send only rows with status "No"
-  [switch]$FailOnNonCompliant      # if set, exit non-zero if any "No"
+  [switch]$OnlySendNonCompliant,   # still useful for exit code / filtering
+  [switch]$FailOnNonCompliant      # if set, exit 2 if any status = "No"
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -21,22 +18,20 @@ $ErrorActionPreference = 'SilentlyContinue'
 $OutDir   = Split-Path $ReportBase -Parent
 if (-not (Test-Path $OutDir)) { New-Item -Path $OutDir -ItemType Directory -Force | Out-Null }
 $CsvPath  = "$ReportBase.csv"
-$QueueDir = Join-Path $OutDir "outbox"
-if (-not (Test-Path $QueueDir)) { New-Item -Path $QueueDir -ItemType Directory -Force | Out-Null }
 
 # ----------------------------
 # Helpers
 # ----------------------------
+$Rows = New-Object System.Collections.Generic.List[psobject]
+
 function Add-Row {
   param(
     [string]$Item,
     [string]$Status,
     [string]$Detail
   )
-  if (-not $script:Rows) {
-    $script:Rows = New-Object System.Collections.Generic.List[psobject]
-  }
-  $script:Rows.Add([pscustomobject]@{
+
+  $Rows.Add([pscustomobject]@{
     time   = (Get-Date).ToUniversalTime().ToString("o")
     device = $env:COMPUTERNAME
     user   = $env:USERNAME
@@ -49,44 +44,6 @@ function Add-Row {
 function YesNo {
   param([bool]$Value)
   if ($Value) { "Yes" } else { "No" }
-}
-
-function Send-ToN8N {
-  param(
-    [string]$Url,
-    [object]$Rows,
-    [int]$TimeoutSec,
-    [int]$Retries,
-    [int]$DelaySec
-  )
-
-  if (-not $Url) {
-    Write-Warning "WebhookUrl empty. Skipping POST."
-    return $false
-  }
-
-  $payload = @{ rows = $Rows } | ConvertTo-Json -Depth 6
-
-  for ($i=0; $i -le $Retries; $i++) {
-    try {
-      Invoke-RestMethod -Uri $Url -Method Post `
-        -Headers @{ "Content-Type" = "application/json" } `
-        -Body $payload -TimeoutSec $TimeoutSec | Out-Null
-      Write-Host "Sent results to n8n ($Url)"
-      return $true
-    }
-    catch {
-      Write-Warning ("POST attempt {0} failed: {1}" -f ($i + 1), $_.Exception.Message)
-      if ($i -lt $Retries) { Start-Sleep -Seconds $DelaySec }
-    }
-  }
-
-  # queue to disk
-  $ts = (Get-Date).ToString("yyyyMMdd_HHmmss")
-  $qPath = Join-Path $QueueDir ("winlite_{0}_{1}.json" -f $env:COMPUTERNAME, $ts)
-  $payload | Out-File -FilePath $qPath -Encoding UTF8
-  Write-Warning ("Queued payload for retry: {0}" -f $qPath)
-  return $false
 }
 
 function Format-Bytes {
@@ -674,7 +631,7 @@ if (-not $diskTypeReported) {
 }
 
 # ============================
-# OUTPUT & POST
+# OUTPUT & EXIT
 # ============================
 
 $Rows | Format-Table -AutoSize
@@ -682,28 +639,15 @@ $Rows | Export-Csv -Path $CsvPath -NoTypeInformation -Encoding UTF8
 Write-Host ""
 Write-Host ("CSV report: {0}" -f $CsvPath)
 
-# Filter for send
-if ($OnlySendNonCompliant) {
-  $rowsToSend = $Rows | Where-Object { $_.status -eq "No" }
-}
-else {
-  $rowsToSend = $Rows
-}
+# For loader / automation: also output JSON to STDOUT
+$Rows | ConvertTo-Json -Depth 6
 
+# exit code logic (for local / RMM use)
 $nonCompliantCount = ($Rows | Where-Object { $_.status -eq "No" }).Count
-
-if ($WebhookUrl -and $rowsToSend.Count -gt 0) {
-  [void](Send-ToN8N -Url $WebhookUrl -Rows $rowsToSend -TimeoutSec $HttpTimeoutSec -Retries $RetryCount -DelaySec $RetryDelaySec)
-}
-elseif (-not $WebhookUrl) {
-  Write-Warning "WebhookUrl not set. Skipping POST."
-}
-else {
-  Write-Host "Nothing to send (no rows or filtered to zero)."
-}
 
 if ($FailOnNonCompliant -and $nonCompliantCount -gt 0) {
   Write-Warning ("Non-compliant checks: {0}" -f $nonCompliantCount)
   exit 2
 }
+
 exit 0
