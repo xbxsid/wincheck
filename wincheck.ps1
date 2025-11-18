@@ -3,7 +3,7 @@
 
 [CmdletBinding()]
 param(
-  [string]$WebhookUrl     = "https://n8n.comguys.co/webhook/win",
+  [string]$WebhookUrl,
   [string]$ReportBase     = "$(Join-Path $env:ProgramData 'CG\LiteCheck\Windows_Lite_Check')",
   [int]$HttpTimeoutSec    = 30,
   [int]$RetryCount        = 0,
