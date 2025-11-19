@@ -1,12 +1,14 @@
 # wincheck.ps1
 # Windows Lite Security / CIS-style baseline + OS/Disk/SMART checks
 # NO Webhook / HTTP logic in this file
+# Optional: write JSON rows to -JsonPath, always write CSV + human table.
 
 [CmdletBinding()]
 param(
   [string]$ReportBase     = "$(Join-Path $env:ProgramData 'CG\LiteCheck\Windows_Lite_Check')",
+  [string]$JsonPath       = "",   # If set, JSON rows will be written here
   [int]$MinFreePercent    = 15,
-  [switch]$OnlySendNonCompliant,   # still useful for exit code / filtering
+  [switch]$OnlySendNonCompliant,   # kept for compatibility / exit code logic
   [switch]$FailOnNonCompliant      # if set, exit 2 if any status = "No"
 )
 
@@ -16,7 +18,9 @@ $ErrorActionPreference = 'SilentlyContinue'
 # Paths / output
 # ----------------------------
 $OutDir   = Split-Path $ReportBase -Parent
-if (-not (Test-Path $OutDir)) { New-Item -Path $OutDir -ItemType Directory -Force | Out-Null }
+if (-not (Test-Path $OutDir)) {
+    New-Item -Path $OutDir -ItemType Directory -Force | Out-Null
+}
 $CsvPath  = "$ReportBase.csv"
 
 # ----------------------------
@@ -634,15 +638,27 @@ if (-not $diskTypeReported) {
 # OUTPUT & EXIT
 # ============================
 
+# Human-readable console + CSV
 $Rows | Format-Table -AutoSize
 $Rows | Export-Csv -Path $CsvPath -NoTypeInformation -Encoding UTF8
 Write-Host ""
 Write-Host ("CSV report: {0}" -f $CsvPath)
 
-# For loader / automation: also output JSON to STDOUT
+# Optional JSON file for loader
+if ($JsonPath -ne "") {
+    try {
+        $json = $Rows | ConvertTo-Json -Depth 6
+        $json | Out-File -FilePath $JsonPath -Encoding UTF8
+    }
+    catch {
+        Write-Warning "Failed to write JSON to $JsonPath: $($_.Exception.Message)"
+    }
+}
+
+# Also write JSON to stdout for manual use
 $Rows | ConvertTo-Json -Depth 6
 
-# exit code logic (for local / RMM use)
+# exit code logic (for local / RMM policies if you ever use it)
 $nonCompliantCount = ($Rows | Where-Object { $_.status -eq "No" }).Count
 
 if ($FailOnNonCompliant -and $nonCompliantCount -gt 0) {
