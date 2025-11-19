@@ -651,7 +651,7 @@ if ($JsonPath -ne "") {
         $json | Out-File -FilePath $JsonPath -Encoding UTF8
     }
     catch {
-        Write-Warning "Failed to write JSON to $JsonPath: $($_.Exception.Message)"
+Write-Warning "Failed to write JSON to ${JsonPath}: $($_.Exception.Message)"
     }
 }
 
